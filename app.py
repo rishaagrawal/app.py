@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import pandas as pd
 import pickle
@@ -130,4 +129,4 @@ if run_clicked:
         st.info("Select ingredients to get personalized recommendations.")
 else:
     st.info("🧠 Adjust your filters and parameters, then click **Run Model** to generate results.")
-```
+
