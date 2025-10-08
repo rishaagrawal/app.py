@@ -1,17 +1,22 @@
+```python
 import streamlit as st
 import pandas as pd
 import pickle
 import matplotlib.pyplot as plt
-
-# Load the saved model and dataset
-frequent_itemsets, rules, df = pickle.load(open('skincare_model.pkl', 'rb'))
+from mlxtend.frequent_patterns import apriori, association_rules
+from mlxtend.preprocessing import TransactionEncoder
 
 # --------------------------
-# PAGE TITLE & DESCRIPTION
+# PAGE CONFIG
 # --------------------------
 st.set_page_config(page_title="Skincare Product Recommendation", layout="wide")
 st.title("💆‍♀️ Skincare Product Recommendation System")
-st.markdown("Discover products and ingredients that match your skin type and preferences.")
+st.markdown("Find ingredient combinations and get personalized product recommendations!")
+
+# --------------------------
+# LOAD DATA
+# --------------------------
+frequent_itemsets, rules, df = pickle.load(open('skincare_model.pkl', 'rb'))
 
 # --------------------------
 # SIDEBAR FILTERS
@@ -30,31 +35,24 @@ selected_category = st.sidebar.multiselect("Select Product Category", product_ca
 brand_list = sorted(df['Brand'].unique().tolist())
 selected_brand = st.sidebar.selectbox("Select Brand (optional)", ["All"] + brand_list)
 
-# Product dropdown
-product_list = sorted(df['Name'].unique().tolist())
-selected_product = st.sidebar.selectbox("Select Product (optional)", ["All"] + product_list)
+# User input for Apriori thresholds
+min_support = st.sidebar.number_input("Minimum Support", min_value=0.01, max_value=1.0, value=0.05, step=0.01)
+min_confidence = st.sidebar.number_input("Minimum Confidence", min_value=0.1, max_value=1.0, value=0.6, step=0.05)
 
 # --------------------------
-# FILTERING THE DATA
+# FILTER DATA BASED ON SELECTION
 # --------------------------
 filtered_df = df.copy()
 
-# Filter by skin type
 if selected_skin:
     for skin in selected_skin:
         filtered_df = filtered_df[filtered_df[skin] == 1]
 
-# Filter by product category
 if selected_category:
     filtered_df = filtered_df[filtered_df['Label'].isin(selected_category)]
 
-# Filter by brand
 if selected_brand != "All":
     filtered_df = filtered_df[filtered_df['Brand'] == selected_brand]
-
-# Filter by product
-if selected_product != "All":
-    filtered_df = filtered_df[filtered_df['Name'] == selected_product]
 
 # --------------------------
 # DISPLAY FILTERED PRODUCTS
@@ -72,43 +70,64 @@ all_ingredients = sorted(set(i for lst in df['Ingredients'] for i in lst))
 selected_ing = st.multiselect("Select Ingredients You Currently Use", all_ingredients)
 
 # --------------------------
-# APRIORI RESULTS AND PLOTS
+# RUN MODEL BUTTON
 # --------------------------
-if selected_ing:
-    st.subheader("📊 Frequent Itemsets (Top 10)")
-    st.dataframe(frequent_itemsets.head(10))
+run_clicked = st.button("🚀 Run Model")
 
-    st.subheader("📈 Top Association Rules (Confidence ≥ 0.6)")
-    st.dataframe(rules[['antecedents', 'consequents', 'support', 'confidence', 'lift']].head(10))
+if run_clicked:
+    st.subheader("🔎 Running Apriori with your parameters...")
+    
+    # Recreate transaction data for Apriori
+    te = TransactionEncoder()
+    te_array = te.fit(filtered_df['Ingredients']).transform(filtered_df['Ingredients'])
+    trans_data = pd.DataFrame(te_array, columns=te.columns_)
 
-    # Plot top frequent itemsets
-    st.subheader("📉 Top Frequent Itemsets (Bar Chart)")
-    top_items = frequent_itemsets.sort_values('support', ascending=False).head(10)
-    plt.figure(figsize=(8, 4))
-    plt.barh(top_items['itemsets'].astype(str), top_items['support'])
-    plt.xlabel('Support')
-    plt.ylabel('Itemsets')
-    st.pyplot(plt)
+    # Apply Apriori based on user thresholds
+    frequent_itemsets_user = apriori(trans_data, min_support=min_support, use_colnames=True)
+    rules_user = association_rules(frequent_itemsets_user, metric="confidence", min_threshold=min_confidence)
+
+    if frequent_itemsets_user.empty:
+        st.warning("No frequent itemsets found. Try lowering the support value.")
+    else:
+        st.subheader("📊 Frequent Itemsets (Top 10)")
+        st.dataframe(frequent_itemsets_user.sort_values('support', ascending=False).head(10))
+
+        st.subheader("📈 Association Rules (Top 10)")
+        if rules_user.empty:
+            st.warning("No rules found. Try lowering the confidence value.")
+        else:
+            st.dataframe(rules_user[['antecedents', 'consequents', 'support', 'confidence', 'lift']].head(10))
+
+            # Plot bar chart
+            st.subheader("📉 Top Frequent Itemsets (Bar Chart)")
+            top_items = frequent_itemsets_user.sort_values('support', ascending=False).head(10)
+            plt.figure(figsize=(8, 4))
+            plt.barh(top_items['itemsets'].astype(str), top_items['support'])
+            plt.xlabel('Support')
+            plt.ylabel('Itemsets')
+            st.pyplot(plt)
 
     # --------------------------
     # RECOMMENDATION SECTION
     # --------------------------
-    st.subheader("💡 Recommended Products Based on Selected Ingredients")
+    if selected_ing:
+        st.subheader("💡 Recommended Products Based on Your Ingredients")
+        recs = []
+        for _, row in rules_user.iterrows():
+            if set(selected_ing).issubset(row['antecedents']):
+                recs.extend(list(row['consequents']))
+        recs = list(set(recs))
 
-    recs = []
-    for _, row in rules.iterrows():
-        if set(selected_ing).issubset(row['antecedents']):
-            recs.extend(list(row['consequents']))
-    recs = list(set(recs))
-
-    if recs:
-        st.write(f"Products containing **{', '.join(recs)}**:")
-        for r in recs:
-            matched = df[df['Ingredients'].apply(lambda x: r in x)]
-            for _, row in matched.iterrows():
-                st.markdown(f"- **{row['Brand']}** — *{row['Name']}* ({row['Label']})")
+        if recs:
+            st.write(f"Products containing **{', '.join(recs)}**:")
+            for r in recs:
+                matched = df[df['Ingredients'].apply(lambda x: r in x)]
+                for _, row in matched.iterrows():
+                    st.markdown(f"- **{row['Brand']}** — *{row['Name']}* ({row['Label']})")
+        else:
+            st.info("No recommendations found for the selected ingredients.")
     else:
-        st.info("No recommendations found for the selected ingredients. Try adding more or different ones!")
+        st.info("Select ingredients to get personalized recommendations.")
 else:
-    st.info("👆 Select some ingredients above to see recommendations.")
-
+    st.info("🧠 Adjust your filters and parameters, then click **Run Model** to generate results.")
+```
