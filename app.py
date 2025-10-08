@@ -17,8 +17,8 @@ Adjust thresholds to find patterns between ingredients and how they co-occur.
 @st.cache_data
 def load_data():
     df = pd.read_csv("cosmetics.csv")
-    df['ingredients'] = df['ingredients'].astype(str)
-    df['ingredients'] = df['ingredients'].apply(lambda x: x.lower())
+    df['ingredients'] = df['Ingredients'].astype(str)
+    df['ingredients'] = df['Ingredients'].apply(lambda x: x.lower())
     return df
 
 try:
