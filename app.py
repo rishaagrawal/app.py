@@ -111,4 +111,4 @@ if selected_ing:
         st.info("No recommendations found for the selected ingredients. Try adding more or different ones!")
 else:
     st.info("👆 Select some ingredients above to see recommendations.")
-```
+
