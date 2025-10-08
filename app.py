@@ -7,6 +7,7 @@ from mlxtend.preprocessing import TransactionEncoder
 
 # --------------------------
 # PAGE CONFIG
+
 # --------------------------
 st.set_page_config(page_title="Skincare Product Recommendation", layout="wide")
 st.title("💆‍♀️ Skincare Product Recommendation System")
