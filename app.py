@@ -1,126 +1,63 @@
 import streamlit as st
 import pandas as pd
-from mlxtend.frequent_patterns import apriori, association_rules
+import pickle
+import matplotlib.pyplot as plt
 
-# --------------------------------
-# PAGE SETUP
-# --------------------------------
-st.set_page_config(page_title="Smart Skincare Product Recommender", page_icon="💧", layout="wide")
-st.title("💅 Smart Skincare Product Recommendation System")
+# Load model and dataset
+frequent_itemsets, rules, df = pickle.load(open('skincare_model.pkl', 'rb'))
 
-st.write("""
-Discover skincare products and ingredients that go well together — powered by **Apriori frequent itemset mining**.  
-Choose your **skin type** and **current ingredients**, and we’ll suggest **compatible products and brands**.
-""")
+st.title("💆‍♀️ Skincare Product Recommendation System")
 
-# --------------------------------
-# LOAD DATASET
-# --------------------------------
-@st.cache_data
-def load_data():
-    df = pd.read_csv("cosmetics.csv")
+# Sidebar Filters
+skin_types = ['Dry', 'Oily', 'Combination', 'Normal', 'Sensitive']
+selected_skin = st.sidebar.multiselect("Select Skin Type", skin_types)
 
-    # auto-detect ingredients column
-    possible_cols = [c for c in df.columns if 'ingredient' in c.lower()]
-    if possible_cols:
-        df['ingredients'] = df[possible_cols[0]].astype(str)
+search_brand = st.sidebar.text_input("Search by Brand Name")
+search_product = st.sidebar.text_input("Search by Product Name")
+
+# Display dataset based on filters
+filtered_df = df.copy()
+if selected_skin:
+    for skin in selected_skin:
+        filtered_df = filtered_df[filtered_df[skin] == 1]
+if search_brand:
+    filtered_df = filtered_df[filtered_df['Brand'].str.contains(search_brand, case=False, na=False)]
+if search_product:
+    filtered_df = filtered_df[filtered_df['Label'].str.contains(search_product, case=False, na=False)]
+
+st.subheader("Filtered Products")
+st.dataframe(filtered_df[['Brand', 'Label', 'Ingredients']].head(20))
+
+# Select ingredients
+all_ingredients = sorted(set(i for lst in df['Ingredients'] for i in lst))
+selected_ing = st.multiselect("Select Ingredients You Currently Use", all_ingredients)
+
+if selected_ing:
+    st.subheader("Frequent Itemsets")
+    st.dataframe(frequent_itemsets.head(10))
+
+    st.subheader("Top Association Rules")
+    st.dataframe(rules.head(10))
+
+    # Plot
+    st.subheader("Top Frequent Itemsets (Bar Chart)")
+    top_items = frequent_itemsets.sort_values('support', ascending=False).head(10)
+    plt.barh(top_items['itemsets'].astype(str), top_items['support'])
+    plt.xlabel('Support')
+    st.pyplot(plt)
+
+    # Recommendation section
+    st.subheader("🧴 Recommended Products")
+    recs = []
+    for _, row in rules.iterrows():
+        if set(selected_ing).issubset(row['antecedents']):
+            recs.extend(list(row['consequents']))
+    recs = list(set(recs))
+    if recs:
+        st.write(f"Products containing {', '.join(recs)}:")
+        for r in recs:
+            matched = df[df['Ingredients'].apply(lambda x: r in x)]
+            for _, row in matched.iterrows():
+                st.write(f"- **{row['Brand']}** — {row['Label']}")
     else:
-        st.error("❌ No 'ingredients' column found in dataset.")
-        st.stop()
-
-    # detect brand and product name columns if present
-    brand_cols = [c for c in df.columns if 'brand' in c.lower()]
-    name_cols = [c for c in df.columns if 'name' in c.lower() or 'product' in c.lower()]
-
-    df['brand'] = df[brand_cols[0]] if brand_cols else "Unknown Brand"
-    df['product'] = df[name_cols[0]] if name_cols else "Unnamed Product"
-
-    return df
-
-data = load_data()
-
-# --------------------------------
-# DATA PROCESSING
-# --------------------------------
-transactions = data['ingredients'].apply(lambda x: [i.strip().lower() for i in x.split(',') if i.strip() != ""])
-all_ingredients = sorted(set(i for sublist in transactions for i in sublist))
-
-# create one-hot encoded matrix
-oht = pd.DataFrame(0, index=range(len(transactions)), columns=all_ingredients)
-for idx, items in enumerate(transactions):
-    for item in set(items):
-        if item in oht.columns:
-            oht.at[idx, item] = 1
-
-# --------------------------------
-# SIDEBAR INPUTS
-# --------------------------------
-st.sidebar.header("🧴 Your Skin Profile")
-
-skin_types = ["Oily", "Dry", "Combination", "Sensitive", "Normal"]
-skin_type = st.sidebar.selectbox("Select your skin type", skin_types)
-
-selected_ingredients = st.sidebar.multiselect(
-    "Select ingredients you currently use",
-    options=all_ingredients,
-    help="Pick the ingredients from your current routine."
-)
-
-min_support = st.sidebar.slider("Minimum Support", 0.01, 0.5, 0.05, 0.01)
-min_confidence = st.sidebar.slider("Minimum Confidence", 0.1, 1.0, 0.5, 0.05)
-
-# --------------------------------
-# FREQUENT ITEMSET MINING
-# --------------------------------
-st.info("⏳ Mining frequent ingredient patterns... please wait.")
-
-frequent_itemsets = apriori(oht, min_support=min_support, use_colnames=True)
-if frequent_itemsets.empty:
-    st.error("No frequent itemsets found. Try lowering support.")
-    st.stop()
-
-rules = association_rules(frequent_itemsets, metric="confidence", min_threshold=min_confidence)
-if rules.empty:
-    st.error("No association rules found. Try lowering confidence.")
-    st.stop()
-
-rules['antecedents'] = rules['antecedents'].apply(lambda x: ', '.join(list(x)))
-rules['consequents'] = rules['consequents'].apply(lambda x: ', '.join(list(x)))
-
-# --------------------------------
-# PRODUCT RECOMMENDATION LOGIC
-# --------------------------------
-st.subheader("✨ Personalized Product Recommendations")
-
-if selected_ingredients:
-    matched_rules = rules[rules['antecedents'].apply(lambda x: all(i in x for i in selected_ingredients))]
-
-    if not matched_rules.empty:
-        recommended_ingredients = set()
-        for cons in matched_rules['consequents']:
-            for ing in cons.split(','):
-                recommended_ingredients.add(ing.strip())
-
-        st.success(f"🌿 Based on your ingredients and {skin_type} skin, we recommend these additional ingredients:")
-        st.write(", ".join(sorted(recommended_ingredients)))
-
-        # find matching products from dataset
-        mask = data['ingredients'].apply(lambda x: any(i in x.lower() for i in recommended_ingredients))
-        suggested_products = data[mask][['brand', 'product', 'ingredients']].drop_duplicates().head(10)
-
-        st.subheader("🧴 Recommended Products")
-        if not suggested_products.empty:
-            st.dataframe(suggested_products)
-        else:
-            st.warning("No specific products found with those ingredient combinations.")
-    else:
-        st.warning("No matching rules for your chosen ingredients. Try adding more or lowering thresholds.")
-else:
-    st.subheader("💡 Top Frequent Ingredient Pairs in All Products")
-    st.dataframe(rules[['antecedents', 'consequents', 'support', 'confidence', 'lift']].sort_values(by='lift', ascending=False).head(10))
-
-# --------------------------------
-# DOWNLOAD OPTION
-# --------------------------------
-csv = rules.to_csv(index=False).encode('utf-8')
-st.download_button("📥 Download All Rules (CSV)", csv, "skincare_rules.csv", "text/csv")
+        st.write("No recommendations found for the selected ingredients.")
